@@ -7,7 +7,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 SERVER = "https://test.avighnac.me"
 MAX_WORKERS = 32                  
-
 BASE = "https://oj.uz/submission/{}"
 
 def clean_int(s: str) -> int:
@@ -74,11 +73,28 @@ def fetch_one(i: int):
         print(f"[ERROR] Exception fetching {i}: {e}")
         return None
 
+def safe_request(method, url, **kwargs):
+    """Wrapper around requests that retries forever if server is down."""
+    delay = 5
+    while True:
+        try:
+            r = requests.request(method, url, timeout=30, **kwargs)
+            return r
+        except Exception as e:
+            print(f"[ERROR] {method.upper()} {url} failed: {e} — retrying in {delay}s")
+            time.sleep(delay)
+
 def main():
     while True:
         # ask server for work
-        r = requests.get(f"{SERVER}/get_work")
-        ids = r.json().get("ids", [])
+        r = safe_request("GET", f"{SERVER}/get_work")
+        try:
+            ids = r.json().get("ids", [])
+        except Exception as e:
+            print(f"[ERROR] Failed to decode /get_work JSON: {e}")
+            time.sleep(5)
+            continue
+
         if not ids:
             print("[INFO] No work available, sleeping...")
             time.sleep(5)
@@ -100,10 +116,13 @@ def main():
                 elif row:
                     results.append(row)
 
-        # send back to server
+        # send back to server (with retry)
         payload = {"submissions": results, "notfound": notfound}
-        resp = requests.post(f"{SERVER}/submit_work", json=payload)
-        print(f"[INFO] Submitted batch: {resp.json()}")
+        r = safe_request("POST", f"{SERVER}/submit_work", json=payload)
+        try:
+            print(f"[INFO] Submitted batch: {r.json()}")
+        except Exception:
+            print(f"[WARN] Submitted batch but got invalid response")
 
 if __name__ == "__main__":
     main()
